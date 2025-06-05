@@ -2,7 +2,14 @@
 FROM python:3.9-slim
 
 # Thiết lập thư mục làm việc trong container
-WORKDIR /app
+WORKDIR /code
+
+# Cài đặt các dependencies hệ thống
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
 # Sao chép các tệp yêu cầu vào container
 COPY requirements.txt .

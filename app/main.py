@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 from typing import Dict, List
+from app.api.video import router as video_router
 
 # Configure logging
 logging.basicConfig(
@@ -25,6 +26,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include routers
+app.include_router(video_router, prefix="/api/v1/video", tags=["video"])
 
 @app.get("/")
 async def root():
