@@ -1,0 +1,3164 @@
+# AI 드라마 완전 자동화 시스템 - 개발 지시서
+
+## 1. 시스템 개요
+
+### 1.1 프로젝트명
+- **AI Drama Automation System (AIDAS)**
+
+### 1.2 목적
+- 하루 10개의 AI 드라마를 완전 자동으로 제작하여 YouTube에 업로드하는 시스템
+
+### 1.3 핵심 요구사항
+- 24시간 무인 운영
+- 일일 10개 에피소드 자동 생산
+- 에러 발생 시 자동 복구
+- 실시간 모니터링 가능
+
+---
+
+## 2. 시스템 아키텍처
+
+### 2.1 전체 구조도
+```
+┌─────────────────────────────────────────────────────────┐
+│                    메인 컨트롤러                          │
+│              (Main Controller Server)                     │
+└───────────────────────┬─────────────────────────────────┘
+                        │
+        ┌───────────────┼───────────────┐
+        │               │               │
+        ▼               ▼               ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│  작업 큐      │ │  API 관리자   │ │  모니터링     │
+│  (Queue)     │ │  (Manager)    │ │  (Monitor)    │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+       │                │                │
+       ▼                ▼                ▼
+┌──────────────────────────────────────────────────┐
+│                  워커 프로세스                      │
+│  (Script → Voice → Avatar → Edit → Upload)       │
+└──────────────────────────────────────────────────┘
+```
+
+### 2.2 기술 스택
+```yaml
+Backend:
+  - Language: Python 3.9+
+  - Framework: FastAPI
+  - Task Queue: Celery + Redis
+  - Database: PostgreSQL
+  - Container: Docker
+
+APIs:
+  - Script Generation: OpenAI GPT-4
+  - Voice Generation: ElevenLabs
+  - Avatar Video: HeyGen
+  - Video Upload: YouTube Data API v3
+
+Tools:
+  - Video Processing: FFmpeg, MoviePy
+  - Image Processing: Pillow
+  - Scheduling: APScheduler
+```
+
+---
+
+## 3. 상세 개발 지시서
+
+### 3.1 프로젝트 구조
+```
+ai-drama-system/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                 # FastAPI 메인 애플리케이션
+│   ├── config.py               # 설정 관리
+│   ├── database.py             # 데이터베이스 연결
+│   │
+│   ├── models/                 # 데이터베이스 모델
+│   │   ├── __init__.py
+│   │   ├── drama.py            # 드라마 시리즈 모델
+│   │   ├── episode.py          # 에피소드 모델
+│   │   ├── character.py        # 캐릭터 모델
+│   │   └── job.py              # 작업 큐 모델
+│   │
+│   ├── api/                    # API 엔드포인트
+│   │   ├── __init__.py
+│   │   ├── drama.py            # 드라마 관리 API
+│   │   ├── episode.py          # 에피소드 관리 API
+│   │   ├── job.py              # 작업 관리 API
+│   │   └── stats.py            # 통계 API
+│   │
+│   ├── core/                   # 핵심 비즈니스 로직
+│   │   ├── __init__.py
+│   │   ├── script_generator.py # 대본 생성
+│   │   ├── voice_generator.py  # 음성 생성
+│   │   ├── avatar_generator.py # 아바타 영상 생성
+│   │   ├── video_editor.py     # 영상 편집
+│   │   └── youtube_uploader.py # YouTube 업로드
+│   │
+│   ├── workers/                # Celery 워커
+│   │   ├── __init__.py
+│   │   ├── tasks.py            # 비동기 작업 정의
+│   │   └── scheduler.py        # 스케줄러
+│   │
+│   └── utils/                  # 유틸리티
+│       ├── __init__.py
+│       ├── logger.py           # 로깅
+│       ├── exceptions.py       # 커스텀 예외
+│       └── helpers.py          # 헬퍼 함수
+│
+├── tests/                      # 테스트
+├── migrations/                 # 데이터베이스 마이그레이션
+├── static/                     # 정적 파일
+├── templates/                  # 템플릿 파일docker-compose.yml
+├── docker-compose.yml          # Docker 설정
+├── requirements.txt            # 의존성
+└── README.md                   # 프로젝트 문서
+```
+
+---
+
+## 4. 핵심 모듈 개발 지시
+
+### 4.1 대본 생성 모듈 (script_generator.py) - 시리즈 연속성 강화
+
+#### 4.1.1 클래스 구조
+```python
+class ScriptGenerator:
+    def __init__(self):
+        self.openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        self.drama_config = self.load_drama_config()
+        self.story_memory = StoryMemory()  # 스토리 연속성 관리
+        self.character_tracker = CharacterTracker()  # 캐릭터 추적
+    
+    def create_new_series(self, series_config: Dict) -> Dict:
+        """
+        새로운 드라마 시리즈 생성
+        
+        Args:
+            series_config: {
+                "title": "첫사랑은 처음이라서",
+                "genre": "로맨틱 코미디",
+                "total_episodes": 16,
+                "episode_duration": 10,
+                "main_theme": "첫사랑의 설렘과 성장",
+                "target_audience": "20-30대 여성"
+            }
+        """
+        # 1. 전체 시리즈 플롯 생성
+        series_plot = self.generate_series_plot(series_config)
+        
+        # 2. 주요 캐릭터 설정
+        characters = self.create_character_profiles(series_config)
+        
+        # 3. 에피소드별 개요 생성
+        episode_outlines = self.generate_episode_outlines(
+            series_plot, 
+            series_config["total_episodes"]
+        )
+        
+        # 4. 시리즈 데이터 저장
+        series_data = {
+            "series_id": generate_uuid(),
+            "config": series_config,
+            "plot": series_plot,
+            "characters": characters,
+            "episode_outlines": episode_outlines,
+            "story_arc": self.create_story_arc(series_plot)
+        }
+        
+        self.story_memory.save_series(series_data)
+        return series_data
+    
+    def generate_episode_script(self, series_id: str, episode_number: int) -> Dict:
+        """
+        연속성 있는 에피소드 대본 생성
+        """
+        # 1. 시리즈 정보 로드
+        series = self.story_memory.get_series(series_id)
+        
+        # 2. 이전 에피소드 정보 수집
+        previous_episodes = self.story_memory.get_previous_episodes(
+            series_id, 
+            episode_number
+        )
+        
+        # 3. 현재 에피소드에 필요한 컨텍스트 구성
+        context = self.build_episode_context(
+            series,
+            episode_number,
+            previous_episodes
+        )
+        
+        # 4. 에피소드 대본 생성
+        script = self.generate_script_with_context(context)
+        
+        # 5. 연속성 검증
+        self.validate_continuity(script, context)
+        
+        # 6. 스토리 메모리 업데이트
+        self.story_memory.update_episode(series_id, episode_number, script)
+        
+        return script
+    
+    def build_episode_context(self, series: Dict, episode_num: int, previous: List) -> Dict:
+        """에피소드 컨텍스트 구성"""
+        return {
+            "series_info": series["config"],
+            "overall_plot": series["plot"],
+            "current_episode_outline": series["episode_outlines"][episode_num - 1],
+            "character_states": self.character_tracker.get_current_states(series["series_id"]),
+            "previous_events": self.summarize_previous_events(previous),
+            "unresolved_plots": self.get_unresolved_plots(previous),
+            "relationships": self.character_tracker.get_relationship_status(series["series_id"]),
+            "story_progress": self.calculate_story_progress(episode_num, series["config"]["total_episodes"])
+        }
+```
+
+#### 4.1.2 스토리 메모리 시스템
+```python
+class StoryMemory:
+    """드라마 시리즈의 연속성을 관리하는 시스템"""
+    
+    def __init__(self):
+        self.db = Database()
+    
+    def save_series(self, series_data: Dict):
+        """시리즈 전체 정보 저장"""
+        self.db.insert("series_memory", {
+            "series_id": series_data["series_id"],
+            "plot_summary": series_data["plot"],
+            "character_profiles": json.dumps(series_data["characters"]),
+            "episode_outlines": json.dumps(series_data["episode_outlines"]),
+            "story_arc": json.dumps(series_data["story_arc"])
+        })
+    
+    def get_previous_episodes(self, series_id: str, current_episode: int) -> List[Dict]:
+        """이전 에피소드 정보 조회"""
+        return self.db.query("""
+            SELECT episode_number, summary, key_events, character_developments
+            FROM episodes
+            WHERE series_id = %s AND episode_number < %s
+            ORDER BY episode_number DESC
+            LIMIT 5
+        """, (series_id, current_episode))
+    
+    def update_episode(self, series_id: str, episode_num: int, script: Dict):
+        """에피소드 정보 업데이트"""
+        # 1. 주요 사건 추출
+        key_events = self.extract_key_events(script)
+        
+        # 2. 캐릭터 발전사항 추출
+        character_developments = self.extract_character_developments(script)
+        
+        # 3. 관계 변화 추출
+        relationship_changes = self.extract_relationship_changes(script)
+        
+        # 4. 미해결 플롯 업데이트
+        unresolved_plots = self.update_unresolved_plots(script)
+        
+        self.db.update("episodes", {
+            "summary": self.generate_episode_summary(script),
+            "key_events": json.dumps(key_events),
+            "character_developments": json.dumps(character_developments),
+            "relationship_changes": json.dumps(relationship_changes),
+            "unresolved_plots": json.dumps(unresolved_plots)
+        }, {"series_id": series_id, "episode_number": episode_num})
+```
+
+#### 4.1.3 캐릭터 추적 시스템 - 10명 이상 캐릭터 관리
+```python
+class CharacterTracker:
+    """캐릭터의 상태와 발전을 추적하는 시스템"""
+    
+    def __init__(self):
+        self.db = Database()
+        self.min_characters = 10  # 최소 캐릭터 수
+        self.voice_manager = VoiceCharacterManager()
+    
+    def create_character_profiles(self, series_config: Dict) -> List[Dict]:
+        """시리즈 시작 시 캐릭터 프로필 생성 (최소 10명)"""
+        characters = []
+        
+        # 1. 핵심 주인공 (2명)
+        main_characters = [
+            {
+                "id": "CHAR001",
+                "name": "강민준",
+                "role": "주인공(남)",
+                "importance": "main",
+                "age": 28,
+                "occupation": "스타트업 CEO",
+                "personality": ["열정적", "다정함", "때로는 충동적"],
+                "background": "대기업을 그만두고 창업한 청년",
+                "goals": ["사업 성공", "진정한 사랑 찾기"],
+                "secrets": ["과거 실패한 사업으로 인한 트라우마"],
+                "voice_profile": {
+                    "gender": "male",
+                    "age_group": "young_adult",
+                    "tone": "warm",
+                    "speaking_style": "confident"
+                },
+                "appearance_profile": {
+                    "avatar_type": "professional_male",
+                    "age_appearance": "late_20s",
+                    "style": "modern_casual"
+                }
+            },
+            {
+                "id": "CHAR002",
+                "name": "이수진",
+                "role": "주인공(여)",
+                "importance": "main",
+                "age": 26,
+                "occupation": "웹툰 작가",
+                "personality": ["창의적", "독립적", "내향적"],
+                "background": "인기 웹툰 작가지만 대인관계에 서툼",
+                "goals": ["더 큰 성공", "자신감 찾기"],
+                "secrets": ["유명 작가인 것을 숨기고 있음"],
+                "voice_profile": {
+                    "gender": "female",
+                    "age_group": "young_adult",
+                    "tone": "soft",
+                    "speaking_style": "thoughtful"
+                }
+            }
+        ]
+        
+        # 2. 주요 조연 (4명)
+        supporting_characters = [
+            {
+                "id": "CHAR003",
+                "name": "박지호",
+                "role": "민준의 절친/조언자",
+                "importance": "major_supporting",
+                "age": 29,
+                "occupation": "변호사",
+                "personality": ["이성적", "충실함", "때로는 냉정함"],
+                "voice_profile": {
+                    "gender": "male",
+                    "age_group": "adult",
+                    "tone": "serious",
+                    "speaking_style": "articulate"
+                }
+            },
+            {
+                "id": "CHAR004",
+                "name": "김하늘",
+                "role": "수진의 베프",
+                "importance": "major_supporting",
+                "age": 25,
+                "occupation": "카페 사장",
+                "personality": ["밝음", "수다스러움", "따뜻함"],
+                "voice_profile": {
+                    "gender": "female",
+                    "age_group": "young_adult",
+                    "tone": "cheerful",
+                    "speaking_style": "energetic"
+                }
+            },
+            {
+                "id": "CHAR005",
+                "name": "차성훈",
+                "role": "민준의 라이벌/투자자",
+                "importance": "major_supporting",
+                "age": 35,
+                "occupation": "벤처투자자",
+                "personality": ["야심참", "냉철함", "전략적"],
+                "secrets": ["수진에게 관심 있음"],
+                "voice_profile": {
+                    "gender": "male",
+                    "age_group": "adult",
+                    "tone": "authoritative",
+                    "speaking_style": "calculating"
+                }
+            },
+            {
+                "id": "CHAR006",
+                "name": "한소영",
+                "role": "민준의 전 여자친구",
+                "importance": "major_supporting",
+                "age": 27,
+                "occupation": "패션 디자이너",
+                "personality": ["세련됨", "자신감", "독점욕"],
+                "voice_profile": {
+                    "gender": "female",
+                    "age_group": "young_adult",
+                    "tone": "sophisticated",
+                    "speaking_style": "assertive"
+                }
+            }
+        ]
+        
+        # 3. 가족 구성원 (4명)
+        family_characters = [
+            {
+                "id": "CHAR007",
+                "name": "강정호",
+                "role": "민준의 아버지",
+                "importance": "supporting",
+                "age": 58,
+                "occupation": "은퇴한 대기업 임원",
+                "personality": ["엄격함", "전통적", "가족애"],
+                "voice_profile": {
+                    "gender": "male",
+                    "age_group": "senior",
+                    "tone": "deep",
+                    "speaking_style": "formal"
+                }
+            },
+            {
+                "id": "CHAR008",
+                "name": "이미경",
+                "role": "수진의 어머니",
+                "importance": "supporting",
+                "age": 52,
+                "occupation": "주부",
+                "personality": ["따뜻함", "걱정많음", "헌신적"],
+                "voice_profile": {
+                    "gender": "female",
+                    "age_group": "middle_age",
+                    "tone": "caring",
+                    "speaking_style": "gentle"
+                }
+            },
+            {
+                "id": "CHAR009",
+                "name": "강민서",
+                "role": "민준의 여동생",
+                "importance": "supporting",
+                "age": 24,
+                "occupation": "대학원생",
+                "personality": ["똑똑함", "발랄함", "오지랖"],
+                "voice_profile": {
+                    "gender": "female",
+                    "age_group": "young_adult",
+                    "tone": "bright",
+                    "speaking_style": "casual"
+                }
+            },
+            {
+                "id": "CHAR010",
+                "name": "이준호",
+                "role": "수진의 남동생",
+                "importance": "supporting",
+                "age": 22,
+                "occupation": "대학생",
+                "personality": ["게임덕후", "내향적", "누나바라기"],
+                "voice_profile": {
+                    "gender": "male",
+                    "age_group": "young",
+                    "tone": "youthful",
+                    "speaking_style": "shy"
+                }
+            }
+        ]
+        
+        # 4. 확장 캐릭터 자동 생성 (필요시 추가)
+        additional_characters = self.generate_additional_characters(series_config)
+        
+        # 전체 캐릭터 통합
+        characters = main_characters + supporting_characters + family_characters + additional_characters
+        
+        # 5. 캐릭터별 음성/아바타 할당
+        for char in characters:
+            char["voice_assignment"] = self.voice_manager.assign_voice(char)
+            char["avatar_assignment"] = self.assign_avatar_strategy(char)
+        
+        # 각 캐릭터 저장
+        for char in characters:
+            self.save_character(series_config["series_id"], char)
+        
+        return characters
+    
+    def generate_additional_characters(self, series_config: Dict) -> List[Dict]:
+        """장르와 스토리에 맞는 추가 캐릭터 자동 생성"""
+        additional = []
+        
+        if series_config["genre"] == "romance":
+            additional.extend([
+                {
+                    "id": "CHAR011",
+                    "name": "정유진",
+                    "role": "카페 알바생",
+                    "importance": "minor",
+                    "personality": ["수줍음", "관찰력"],
+                    "voice_profile": {"gender": "female", "age_group": "young"}
+                },
+                {
+                    "id": "CHAR012", 
+                    "name": "김과장",
+                    "role": "민준 회사 직원",
+                    "importance": "minor",
+                    "personality": ["성실함", "충성심"],
+                    "voice_profile": {"gender": "male", "age_group": "middle_age"}
+                }
+            ])
+        
+        return additional
+    
+    def assign_avatar_strategy(self, character: Dict) -> Dict:
+        """캐릭터 중요도에 따른 아바타 전략"""
+        if character["importance"] == "main":
+            return {
+                "type": "full_avatar",
+                "avatar_id": self.get_best_matching_avatar(character),
+                "fallback": "avatar_b"
+            }
+        elif character["importance"] == "major_supporting":
+            return {
+                "type": "partial_avatar",
+                "strategy": "side_profile_or_back",
+                "voice_only_scenes": 0.3  # 30%는 음성만
+            }
+        else:
+            return {
+                "type": "voice_only",
+                "visual_representation": "static_image_or_text"
+            }
+        
+    
+class VoiceCharacterManager:
+    """다수 캐릭터 음성 관리 시스템"""
+    
+    def __init__(self):
+        self.voice_pool = self.load_available_voices()
+        self.voice_assignments = {}
+    
+    def assign_voice(self, character: Dict) -> Dict:
+        """캐릭터별 고유 음성 할당"""
+        
+        # ElevenLabs 다국어 음성 활용
+        voice_options = {
+            "male_young": ["Josh", "Adam", "Antoni", "Arnold"],
+            "male_adult": ["Clyde", "Dave", "Ethan", "Fin"],
+            "male_senior": ["George", "Harry", "James"],
+            "female_young": ["Bella", "Charlotte", "Domi", "Elli"],
+            "female_adult": ["Emily", "Freya", "Gigi", "Grace"],
+            "female_senior": ["Glinda", "Jessie"]
+        }
+        
+        # 음성 변조 파라미터로 다양성 확보
+        base_voice = self.select_base_voice(
+            character["voice_profile"]["gender"],
+            character["voice_profile"]["age_group"]
+        )
+        
+        voice_modulation = {
+            "pitch": self.calculate_pitch(character),
+            "speed": self.calculate_speed(character),
+            "emotion_baseline": character["voice_profile"]["tone"]
+        }
+        
+        return {
+            "base_voice_id": base_voice,
+            "modulation": voice_modulation,
+            "backup_voice_id": self.get_backup_voice(base_voice)
+        }
+    
+    def get_current_states(self, series_id: str) -> Dict:
+        """현재 캐릭터들의 상태 조회"""
+        characters = self.db.query("""
+            SELECT name, current_state, emotional_state, location, 
+                   active_goals, resolved_goals
+            FROM character_states
+            WHERE series_id = %s
+        """, (series_id,))
+        
+        return {char["name"]: char for char in characters}
+    
+    def update_character_state(self, series_id: str, character_name: str, changes: Dict):
+        """에피소드 후 캐릭터 상태 업데이트"""
+        current_state = self.get_character_state(series_id, character_name)
+        
+        # 상태 업데이트
+        new_state = {
+            "emotional_state": changes.get("emotional_state", current_state["emotional_state"]),
+            "location": changes.get("location", current_state["location"]),
+            "active_goals": self.update_goals(current_state["active_goals"], changes),
+            "new_traits": changes.get("new_traits", []),
+            "relationships": self.update_relationships(current_state["relationships"], changes)
+        }
+        
+        self.db.update("character_states", new_state, {
+            "series_id": series_id,
+            "character_name": character_name
+        })
+    
+    def get_relationship_status(self, series_id: str) -> Dict:
+        """캐릭터 간 관계 상태 조회"""
+        return self.db.query("""
+            SELECT character1, character2, relationship_type, 
+                   intimacy_level, recent_events
+            FROM character_relationships
+            WHERE series_id = %s
+        """, (series_id,))
+```
+
+#### 4.1.4 프롬프트 템플릿 (연속성 강화)
+```python
+SERIES_PLOT_TEMPLATE = """
+드라마 시리즈 전체 플롯을 생성해주세요.
+
+시리즈 정보:
+- 제목: {title}
+- 장르: {genre}
+- 총 회차: {total_episodes}
+- 주요 테마: {main_theme}
+- 타겟: {target_audience}
+
+요구사항:
+1. 전체 스토리 아크 (기승전결)
+2. 주요 갈등과 해결 지점
+3. 캐릭터 성장 궤적
+4. 로맨스 발전 단계
+5. 서브플롯 2-3개
+6. 각 에피소드별 주요 이벤트
+
+형식:
+{
+    "overall_arc": {
+        "exposition": "1-3화: 인물 소개와 배경 설정",
+        "rising_action": "4-10화: 갈등 심화와 관계 발전",
+        "climax": "11-13화: 주요 갈등 정점",
+        "resolution": "14-16화: 해결과 새로운 시작"
+    },
+    "main_conflict": "설명",
+    "sub_plots": [
+        {"title": "서브플롯1", "episodes": [2, 5, 8, 12]},
+        {"title": "서브플롯2", "episodes": [3, 7, 11, 15]}
+    ],
+    "romance_progression": {
+        "first_meeting": 1,
+        "growing_interest": 3,
+        "first_conflict": 5,
+        "confession": 9,
+        "major_crisis": 12,
+        "resolution": 15
+    }
+}
+"""
+
+EPISODE_SCRIPT_TEMPLATE = """
+연속 드라마 에피소드 대본을 생성해주세요.
+
+시리즈 정보:
+{series_info}
+
+현재 에피소드: {episode_number}/{total_episodes}
+에피소드 개요: {episode_outline}
+
+이전 줄거리:
+{previous_events}
+
+미해결 플롯:
+{unresolved_plots}
+
+캐릭터 현재 상태:
+{character_states}
+
+캐릭터 간 관계:
+{relationships}
+
+스토리 진행도: {story_progress}%
+
+이번 에피소드 요구사항:
+1. 이전 사건들과 자연스럽게 연결
+2. 캐릭터 일관성 유지
+3. 새로운 갈등 요소 1개 추가
+4. 기존 갈등 중 1개 부분 해결
+5. 다음 회 예고가 될 만한 클리프행어
+6. 10분 분량 (대사 80-100개)
+
+주의사항:
+- 갑작스러운 성격 변화 금지
+- 이전 에피소드와 모순되는 내용 금지
+- 잊혀진 캐릭터 없이 모두 등장
+- 관계 발전은 점진적으로
+
+출력 형식:
+{
+    "episode_title": "제목",
+    "summary": "한 줄 요약",
+    "scenes": [...],
+    "character_developments": {
+        "캐릭터명": "이번 화 발전사항"
+    },
+    "plot_progressions": {
+        "main_plot": "진전 내용",
+        "sub_plot_1": "진전 내용"
+    },
+    "cliffhanger": "다음 회 궁금증 유발 요소"
+}
+"""
+
+CONTINUITY_CHECK_TEMPLATE = """
+생성된 대본의 연속성을 검증해주세요.
+
+이전 에피소드 정보:
+{previous_episodes}
+
+현재 대본:
+{current_script}
+
+검증 항목:
+1. 캐릭터 일관성 (성격, 말투, 행동)
+2. 스토리 연속성 (사건의 인과관계)
+3. 시간/장소 연속성
+4. 관계 발전의 자연스러움
+5. 설정 모순 여부
+
+문제 발견 시:
+{
+    "continuity_issues": [
+        {
+            "type": "character_inconsistency",
+            "character": "캐릭터명",
+            "issue": "구체적 문제",
+            "suggestion": "수정 제안"
+        }
+    ],
+    "severity": "high/medium/low"
+}
+"""
+
+### 4.2 음성 생성 모듈 (voice_generator.py) - 10명 이상 캐릭터 지원
+
+#### 4.2.1 클래스 구조
+```python
+class VoiceGenerator:
+    def __init__(self):
+        self.elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+        self.voice_mapping = self.load_voice_mapping()
+        self.voice_cache = VoiceCache()  # 음성 재사용을 위한 캐시
+        self.voice_synthesizer = VoiceSynthesizer()  # 음성 변조 시스템
+    
+    def generate_dialogue_voice(
+        self,
+        character: str,
+        text: str,
+        emotion: str,
+        scene_context: Dict = None
+    ) -> str:
+        """
+        단일 대사 음성 생성 (다양한 캐릭터 지원)
+        
+        Returns:
+            str: 생성된 음성 파일 경로
+        """
+        # 캐릭터 음성 프로필 조회
+        voice_profile = self.get_character_voice_profile(character)
+        
+        # 음성 변조 파라미터 계산
+        modulation_params = self.calculate_modulation(
+            voice_profile,
+            emotion,
+            scene_context
+        )
+        
+        # 음성 생성
+        if voice_profile["type"] == "full_voice":
+            # ElevenLabs 직접 사용
+            audio = self.generate_with_elevenlabs(
+                text,
+                voice_profile["voice_id"],
+                modulation_params
+            )
+        else:
+            # 기본 음성 + 변조
+            audio = self.generate_with_modulation(
+                text,
+                voice_profile["base_voice_id"],
+                modulation_params
+            )
+        
+        # 후처리 (노이즈 제거, 음질 개선)
+        audio = self.post_process_audio(audio, voice_profile)
+        
+        return self.save_audio_file(audio, character, emotion)
+    
+    def generate_scene_voices(self, scene: Dict) -> List[str]:
+        """장면별 음성 일괄 생성 (병렬 처리)"""
+        from concurrent.futures import ThreadPoolExecutor
+        
+        voice_tasks = []
+        
+        # 대사별 작업 준비
+        for dialogue in scene["dialogues"]:
+            task = {
+                "character": dialogue["character"],
+                "text": dialogue["text"],
+                "emotion": dialogue["emotion"],
+                "scene_context": {
+                    "location": scene["location"],
+                    "time": scene["time"],
+                    "atmosphere": scene.get("atmosphere", "neutral")
+                }
+            }
+            voice_tasks.append(task)
+        
+        # 병렬 처리로 속도 개선
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for task in voice_tasks:
+                future = executor.submit(
+                    self.generate_dialogue_voice,
+                    **task
+                )
+                futures.append(future)
+            
+            # 결과 수집
+            voice_files = []
+            for future in futures:
+                try:
+                    voice_file = future.result(timeout=30)
+                    voice_files.append(voice_file)
+                except Exception as e:
+                    logger.error(f"Voice generation failed: {e}")
+                    # 실패 시 TTS 백업 사용
+                    voice_files.append(self.generate_backup_voice(task))
+        
+        return voice_files
+    
+    def calculate_modulation(self, voice_profile: Dict, emotion: str, context: Dict) -> Dict:
+        """음성 변조 파라미터 계산"""
+        modulation = {
+            "pitch": voice_profile["base_pitch"],
+            "speed": voice_profile["base_speed"],
+            "volume": 1.0,
+            "emotion_strength": 0.5
+        }
+        
+        # 감정별 조정
+        emotion_adjustments = {
+            "happy": {"pitch": +0.1, "speed": +0.05, "volume": +0.1},
+            "sad": {"pitch": -0.1, "speed": -0.1, "volume": -0.1},
+            "angry": {"pitch": -0.05, "speed": +0.1, "volume": +0.2},
+            "surprised": {"pitch": +0.2, "speed": +0.15, "volume": +0.15},
+            "fear": {"pitch": +0.15, "speed": +0.2, "volume": -0.05},
+            "neutral": {"pitch": 0, "speed": 0, "volume": 0}
+        }
+        
+        if emotion in emotion_adjustments:
+            for param, adjustment in emotion_adjustments[emotion].items():
+                modulation[param] += adjustment
+        
+        # 상황별 조정
+        if context:
+            if context.get("atmosphere") == "tense":
+                modulation["speed"] += 0.1
+                modulation["volume"] -= 0.1
+            elif context.get("atmosphere") == "romantic":
+                modulation["speed"] -= 0.05
+                modulation["emotion_strength"] += 0.2
+        
+        return modulation
+    
+    def generate_backup_voice(self, task: Dict) -> str:
+        """백업 TTS 시스템 (ElevenLabs 실패 시)"""
+        # Google Cloud TTS 또는 Azure TTS 사용
+        from google.cloud import texttospeech
+        
+        client = texttospeech.TextToSpeechClient()
+        
+        # 한국어 음성 선택
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="ko-KR",
+            name=self.get_google_voice_name(task["character"]),
+            ssml_gender=self.get_gender_from_character(task["character"])
+        )
+        
+        # 음성 합성
+        audio_config = texttospeech.AudioConfig(
+            audio_encoding=texttospeech.AudioEncoding.MP3,
+            speaking_rate=self.calculate_speaking_rate(task["emotion"]),
+            pitch=self.calculate_pitch_semitones(task["emotion"])
+        )
+        
+        synthesis_input = texttospeech.SynthesisInput(text=task["text"])
+        
+        response = client.synthesize_speech(
+            input=synthesis_input,
+            voice=voice,
+            audio_config=audio_config
+        )
+        
+        return self.save_backup_audio(response.audio_content, task)
+```
+
+#### 4.2.2 음성 프로필 관리 (10명 이상)
+```python
+class VoiceProfileManager:
+    """다수 캐릭터 음성 프로필 관리"""
+    
+    def __init__(self):
+        self.profiles = {}
+        self.voice_pool = self.initialize_voice_pool()
+    
+    def initialize_voice_pool(self) -> Dict:
+        """사용 가능한 모든 음성 리소스 초기화"""
+        return {
+            "elevenlabs": {
+                "premium_voices": 6,  # 유료 음성 수
+                "basic_voices": 4,    # 기본 음성 수
+                "voice_ids": [
+                    # 남성 음성
+                    "21m00Tcm4TlvDq8ikWAM",  # Josh
+                    "VR6AewLTigWG4xSOukaG",  # Arnold
+                    "pNInz6obpgDQGcFmaJgB",  # Adam
+                    "yoZ06aMxZJJ28mfd3POQ",  # Sam
+                    # 여성 음성
+                    "AZnzlk1XvdvUeBnXmlld",  # Domi
+                    "EXAVITQu4vr4xnSDxMaL",  # Bella
+                    "MF3mGyEYCl7XYWbV9V6O",  # Elli
+                    "XrExE9yKIg1WjnnlVkGX",  # Charlotte
+                ]
+            },
+            "google_tts": {
+                "korean_voices": [
+                    "ko-KR-Wavenet-A",  # 여성
+                    "ko-KR-Wavenet-B",  # 여성  
+                    "ko-KR-Wavenet-C",  # 남성
+                    "ko-KR-Wavenet-D",  # 남성
+                ]
+            },
+            "azure_tts": {
+                "korean_voices": [
+                    "ko-KR-InJoonNeural",    # 남성
+                    "ko-KR-BongJinNeural",   # 남성
+                    "ko-KR-SunHiNeural",     # 여성
+                    "ko-KR-JiMinNeural",     # 여성
+                ]
+            }
+        }
+    
+    def create_character_voice_profile(self, character: Dict) -> Dict:
+        """캐릭터별 고유 음성 프로필 생성"""
+        
+        importance = character.get("importance", "minor")
+        
+        if importance == "main":
+            # 주인공: 전용 ElevenLabs 음성
+            return self.create_premium_voice_profile(character)
+        elif importance == "major_supporting":
+            # 주요 조연: ElevenLabs 또는 고품질 TTS
+            return self.create_major_voice_profile(character)
+        else:
+            # 기타: TTS + 변조
+            return self.create_minor_voice_profile(character)
+    
+    def create_premium_voice_profile(self, character: Dict) -> Dict:
+        """주인공용 프리미엄 음성 프로필"""
+        # 사용 가능한 음성 중 최적 선택
+        assigned_voice = self.select_best_voice(
+            character["voice_profile"],
+            self.voice_pool["elevenlabs"]["voice_ids"]
+        )
+        
+        return {
+            "type": "full_voice",
+            "service": "elevenlabs",
+            "voice_id": assigned_voice,
+            "base_pitch": 0,
+            "base_speed": 1.0,
+            "quality": "premium",
+            "consistency_check": True
+        }
+    
+    def create_minor_voice_profile(self, character: Dict) -> Dict:
+        """조연용 TTS 기반 음성 프로필"""
+        # 기본 음성 + 고유 변조값
+        base_voice = self.select_tts_voice(character["voice_profile"])
+        
+        # 캐릭터별 고유 변조값 생성 (중복 방지)
+        unique_modulation = self.generate_unique_modulation(
+            character["id"],
+            character["voice_profile"]
+        )
+        
+        return {
+            "type": "modulated_voice",
+            "service": "google_tts",
+            "base_voice_id": base_voice,
+            "base_pitch": unique_modulation["pitch"],
+            "base_speed": unique_modulation["speed"],
+            "timbre_shift": unique_modulation["timbre"],
+            "quality": "standard"
+        }
+    
+    def generate_unique_modulation(self, character_id: str, voice_profile: Dict) -> Dict:
+        """캐릭터별 고유한 음성 변조값 생성"""
+        import hashlib
+        
+        # 캐릭터 ID를 시드로 사용하여 일관된 변조값 생성
+        seed = int(hashlib.md5(character_id.encode()).hexdigest()[:8], 16)
+        
+        # 결정론적 랜덤값 생성
+        import random
+        random.seed(seed)
+        
+        age_factor = {
+            "young": (-0.1, 0.1),
+            "young_adult": (-0.05, 0.05),
+            "adult": (-0.02, 0.08),
+            "middle_age": (0, 0.1),
+            "senior": (0.05, 0.15)
+        }
+        
+        pitch_range = age_factor.get(voice_profile["age_group"], (0, 0))
+        
+        return {
+            "pitch": random.uniform(*pitch_range),
+            "speed": random.uniform(0.9, 1.1),
+            "timbre": random.uniform(-0.2, 0.2)
+        }
+
+### 4.3 아바타 영상 생성 모듈 (avatar_generator.py) - 다수 캐릭터 처리
+
+#### 4.3.1 클래스 구조
+```python
+class AvatarGenerator:
+    def __init__(self):
+        self.heygen_client = HeyGenAPI(api_key=HEYGEN_API_KEY)
+        self.avatar_mapping = self.load_avatar_mapping()
+        self.scene_composer = SceneComposer()  # 다중 캐릭터 장면 구성
+        self.avatar_strategy_manager = AvatarStrategyManager()
+    
+    def create_avatar_video(
+        self,
+        character: str,
+        audio_url: str,
+        background: str,
+        duration: float,
+        scene_type: str = "single"
+    ) -> str:
+        """
+        아바타 영상 생성 (캐릭터 중요도별 전략)
+        
+        Returns:
+            str: 생성된 영상 URL
+        """
+        character_data = self.get_character_data(character)
+        strategy = self.avatar_strategy_manager.get_strategy(character_data)
+        
+        if strategy["type"] == "full_avatar":
+            return self.create_full_avatar_video(
+                character_data,
+                audio_url,
+                background,
+                duration
+            )
+        elif strategy["type"] == "partial_avatar":
+            return self.create_partial_avatar_video(
+                character_data,
+                audio_url,
+                background,
+                duration,
+                strategy["view_angle"]
+            )
+        else:  # voice_only
+            return self.create_voice_only_video(
+                character_data,
+                audio_url,
+                background,
+                duration
+            )
+    
+    def generate_scene_videos(self, scene: Dict, audio_files: List[str]) -> List[str]:
+        """장면별 영상 생성 (다중 캐릭터 대화 처리)"""
+        
+        # 장면 분석
+        scene_analysis = self.analyze_scene_composition(scene)
+        
+        if scene_analysis["type"] == "dialogue":
+            # 대화 장면: 캐릭터 교차 편집
+            return self.create_dialogue_scene(scene, audio_files)
+        elif scene_analysis["type"] == "group":
+            # 그룹 장면: 합성 또는 분할 화면
+            return self.create_group_scene(scene, audio_files)
+        else:
+            # 단독 장면
+            return self.create_single_scenes(scene, audio_files)
+    
+    def create_dialogue_scene(self, scene: Dict, audio_files: List[str]) -> List[str]:
+        """대화 장면 생성 (shot-reverse-shot)"""
+        videos = []
+        
+        for idx, dialogue in enumerate(scene["dialogues"]):
+            character = dialogue["character"]
+            audio_file = audio_files[idx]
+            
+            # 화자 영상
+            speaker_video = self.create_avatar_video(
+                character=character,
+                audio_url=audio_file,
+                background=scene["location"],
+                duration=dialogue["duration"],
+                scene_type="speaker"
+            )
+            
+            # 청자 반응 영상 (필요시)
+            if idx < len(scene["dialogues"]) - 1:
+                next_character = scene["dialogues"][idx + 1]["character"]
+                if next_character != character:
+                    listener_video = self.create_reaction_video(
+                        character=next_character,
+                        emotion=dialogue.get("listener_reaction", "neutral"),
+                        duration=min(dialogue["duration"] * 0.3, 2.0),
+                        background=scene["location"]
+                    )
+                    videos.append({"type": "intercut", "videos": [speaker_video, listener_video]})
+                else:
+                    videos.append({"type": "single", "video": speaker_video})
+            else:
+                videos.append({"type": "single", "video": speaker_video})
+        
+        return videos
+    
+    def create_voice_only_video(
+        self,
+        character_data: Dict,
+        audio_url: str,
+        background: str,
+        duration: float
+    ) -> str:
+        """음성만 있는 영상 생성 (조연용)"""
+        
+        # 전략 1: 배경 + 자막
+        # 전략 2: 실루엣
+        # 전략 3: 대화 상황 표현 (예: 전화 통화 장면)
+        
+        video_style = self.select_voice_only_style(character_data, background)
+        
+        if video_style == "subtitle_overlay":
+            return self.create_subtitle_video(audio_url, background, duration)
+        elif video_style == "silhouette":
+            return self.create_silhouette_video(character_data, audio_url, background, duration)
+        else:
+            return self.create_context_video(character_data, audio_url, background, duration)
+
+class AvatarStrategyManager:
+    """캐릭터별 아바타 전략 관리"""
+    
+    def __init__(self):
+        self.strategies = self.load_strategies()
+        self.avatar_usage_tracker = AvatarUsageTracker()
+    
+    def get_strategy(self, character_data: Dict) -> Dict:
+        """캐릭터에 최적화된 아바타 전략 반환"""
+        
+        importance = character_data.get("importance", "minor")
+        episode_appearance = character_data.get("episode_appearance_rate", 0.1)
+        
+        # 아바타 사용량 체크 (API 한도 관리)
+        current_usage = self.avatar_usage_tracker.get_current_usage()
+        
+        if importance == "main":
+            return {
+                "type": "full_avatar",
+                "avatar_id": character_data["avatar_assignment"]["avatar_id"],
+                "quality": "high",
+                "lip_sync": True
+            }
+        elif importance == "major_supporting" and current_usage < 0.7:
+            # API 사용량 여유 있을 때만 아바타 사용
+            return {
+                "type": "partial_avatar",
+                "view_angle": self.select_view_angle(character_data),
+                "quality": "medium",
+                "lip_sync": False
+            }
+        else:
+            return {
+                "type": "voice_only",
+                "visual_style": "contextual"
+            }
+    
+    def select_view_angle(self, character_data: Dict) -> str:
+        """부분 아바타용 앵글 선택"""
+        # 캐릭터 특성에 따라 적절한 앵글 선택
+        if character_data.get("mysterious", False):
+            return "silhouette"
+        elif character_data.get("role") == "phone_call":
+            return "voice_over"
+        else:
+            return "side_profile"
+```
+
+#### 4.3.2 다중 캐릭터 장면 처리
+```python
+class SceneComposer:
+    """복잡한 다중 캐릭터 장면 구성"""
+    
+    def compose_group_scene(self, characters: List[str], scene_data: Dict) -> Dict:
+        """그룹 장면 구성 (3명 이상)"""
+        
+        composition_strategies = {
+            "meeting": self.compose_meeting_scene,
+            "party": self.compose_party_scene,
+            "family_dinner": self.compose_dinner_scene,
+            "office": self.compose_office_scene
+        }
+        
+        scene_type = self.detect_scene_type(scene_data)
+        composer = composition_strategies.get(scene_type, self.compose_generic_group)
+        
+        return composer(characters, scene_data)
+    
+    def compose_meeting_scene(self, characters: List[str], scene_data: Dict) -> Dict:
+        """회의 장면 구성"""
+        # 주요 화자 중심 + 나머지는 reaction shots
+        main_speakers = self.identify_main_speakers(scene_data["dialogues"])
+        
+        return {
+            "layout": "focus_on_speaker",
+            "main_characters": main_speakers[:2],  # 아바타 사용
+            "supporting_characters": {
+                char: "voice_with_subtitle" for char in characters 
+                if char not in main_speakers[:2]
+            },
+            "camera_work": "dynamic_focus",
+            "background": "meeting_room"
+        }
+    
+    def handle_avatar_limitations(self, required_avatars: int, available_avatars: int) -> Dict:
+        """아바타 부족 시 대체 전략"""
+        
+        if required_avatars <= available_avatars:
+            return {"strategy": "all_avatars"}
+        
+        # 우선순위 기반 할당
+        priority_assignment = {
+            "strategy": "priority_based",
+            "avatar_slots": available_avatars,
+            "alternatives": {
+                "voice_over_image": required_avatars - available_avatars,
+                "techniques": [
+                    "over_shoulder_shot",
+                    "point_of_view_shot",
+                    "reaction_cutaway",
+                    "establishing_shot_with_dialogue"
+                ]
+            }
+        }
+        
+        return priority_assignment
+
+### 4.4 영상 편집 모듈 (video_editor.py)
+
+#### 4.4.1 클래스 구조
+```python
+class VideoEditor:
+    def __init__(self):
+        self.intro_template = "templates/intro.mp4"
+        self.outro_template = "templates/outro.mp4"
+    
+    def edit_episode(
+        self,
+        episode_data: Dict,
+        video_files: List[str]
+    ) -> str:
+        """
+        에피소드 전체 편집
+        
+        Returns:
+            str: 최종 영상 파일 경로
+        """
+        pass
+    
+    def add_subtitles(self, video_clip, dialogue_data: Dict):
+        """자막 추가"""
+        pass
+    
+    def add_transitions(self, clips: List):
+        """장면 전환 효과 추가"""
+        pass
+    
+    def add_background_music(self, video_clip, bgm_file: str):
+        """배경음악 추가"""
+        pass
+```
+
+#### 4.4.2 편집 설정
+```python
+EDIT_SETTINGS = {
+    "video": {
+        "resolution": (1920, 1080),
+        "fps": 30,
+        "codec": "libx264",
+        "bitrate": "5000k"
+    },
+    "subtitles": {
+        "font": "NanumGothic",
+        "size": 48,
+        "color": "white",
+        "stroke_color": "black",
+        "stroke_width": 2,
+        "position": ("center", "bottom")
+    },
+    "transitions": {
+        "fade": {"duration": 0.5},
+        "slide": {"duration": 0.3},
+        "zoom": {"duration": 0.4}
+    }
+}
+```
+
+### 4.5 YouTube 업로드 모듈 (youtube_uploader.py)
+
+#### 4.5.1 클래스 구조
+```python
+class YouTubeUploader:
+    def __init__(self):
+        self.youtube_client = self.authenticate_youtube()
+        self.upload_config = self.load_upload_config()
+    
+    def upload_video(
+        self,
+        video_file: str,
+        episode_data: Dict
+    ) -> str:
+        """
+        YouTube 영상 업로드
+        
+        Returns:
+            str: 업로드된 영상 ID
+        """
+        pass
+    
+    def generate_metadata(self, episode_data: Dict) -> Dict:
+        """영상 메타데이터 생성"""
+        pass
+    
+    def create_thumbnail(self, episode_data: Dict) -> str:
+        """썸네일 자동 생성"""
+        pass
+    
+    def schedule_publish(self, video_id: str, publish_time: datetime):
+        """예약 게시 설정"""
+        pass
+```
+
+#### 4.5.2 업로드 설정
+```python
+UPLOAD_CONFIG = {
+    "title_template": "{drama_title} EP.{episode_number} - {episode_title}",
+    "description_template": """
+{drama_title} {episode_number}화 - {episode_title}
+
+📺 AI가 만든 새로운 형태의 웹드라마
+🎭 출연: AI 아바타
+✍️ 각본: AI (GPT-4)
+🎵 음성: AI (ElevenLabs)
+
+[줄거리]
+{episode_summary}
+
+[다음 이야기]
+매일 저녁 7시 업로드!
+
+#AI드라마 #웹드라마 #{genre}
+    """,
+    "tags": [
+        "AI드라마", "웹드라마", "AI", "인공지능",
+        "AIContent", "WebDrama", "KDrama"
+    ],
+    "category_id": "24",  # Entertainment
+    "privacy_status": "private",
+    "made_for_kids": False
+}
+```
+
+---
+
+## 5. 데이터베이스 스키마
+
+### 5.1 테이블 정의
+```sql
+-- 드라마 시리즈
+CREATE TABLE drama_series (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(200) NOT NULL,
+    genre VARCHAR(50),
+    description TEXT,
+    total_episodes INTEGER DEFAULT 100,
+    status VARCHAR(20) DEFAULT 'active',
+    series_plot JSONB,  -- 전체 시리즈 플롯
+    story_arc JSONB,    -- 스토리 아크 정보
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 에피소드
+CREATE TABLE episodes (
+    id SERIAL PRIMARY KEY,
+    series_id INTEGER REFERENCES drama_series(id),
+    episode_number INTEGER NOT NULL,
+    title VARCHAR(200),
+    script JSONB,
+    summary TEXT,
+    key_events JSONB,              -- 주요 사건들
+    character_developments JSONB,   -- 캐릭터 발전사항
+    relationship_changes JSONB,     -- 관계 변화
+    unresolved_plots JSONB,        -- 미해결 플롯
+    cliffhanger TEXT,              -- 다음회 예고
+    status VARCHAR(20) DEFAULT 'pending',
+    youtube_id VARCHAR(50),
+    youtube_url VARCHAR(500),
+    view_count INTEGER DEFAULT 0,
+    like_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    published_at TIMESTAMP,
+    UNIQUE(series_id, episode_number)
+);
+
+-- 캐릭터
+CREATE TABLE characters (
+    id SERIAL PRIMARY KEY,
+    series_id INTEGER REFERENCES drama_series(id),
+    name VARCHAR(100) NOT NULL,
+    role VARCHAR(50),
+    age INTEGER,
+    occupation VARCHAR(100),
+    personality JSONB,
+    background TEXT,
+    goals JSONB,
+    secrets JSONB,
+    avatar_id VARCHAR(100),
+    voice_id VARCHAR(100),
+    profile JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(series_id, name)
+);
+
+-- 캐릭터 상태 추적
+CREATE TABLE character_states (
+    id SERIAL PRIMARY KEY,
+    series_id INTEGER REFERENCES drama_series(id),
+    episode_id INTEGER REFERENCES episodes(id),
+    character_name VARCHAR(100),
+    emotional_state VARCHAR(50),
+    location VARCHAR(100),
+    active_goals JSONB,
+    resolved_goals JSONB,
+    new_traits JSONB,
+    current_situation TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (series_id, character_name) REFERENCES characters(series_id, name)
+);
+
+-- 캐릭터 관계
+CREATE TABLE character_relationships (
+    id SERIAL PRIMARY KEY,
+    series_id INTEGER REFERENCES drama_series(id),
+    episode_id INTEGER REFERENCES episodes(id),
+    character1 VARCHAR(100),
+    character2 VARCHAR(100),
+    relationship_type VARCHAR(50),  -- 친구, 연인, 라이벌 등
+    intimacy_level INTEGER,         -- 1-10
+    recent_events JSONB,
+    status VARCHAR(50),             -- 발전중, 갈등중, 화해 등
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 스토리 메모리
+CREATE TABLE story_memory (
+    id SERIAL PRIMARY KEY,
+    series_id INTEGER REFERENCES drama_series(id),
+    episode_number INTEGER,
+    memory_type VARCHAR(50),        -- plot_point, character_event, relationship_event
+    content JSONB,
+    importance_level INTEGER,       -- 1-5
+    referenced_episodes JSONB,      -- 이 기억이 참조된 에피소드들
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 에피소드 아웃라인
+CREATE TABLE episode_outlines (
+    id SERIAL PRIMARY KEY,
+    series_id INTEGER REFERENCES drama_series(id),
+    episode_number INTEGER,
+    main_event TEXT,
+    sub_events JSONB,
+    character_focus VARCHAR(100),   -- 이번 화 중심 캐릭터
+    plot_progression JSONB,
+    target_emotions JSONB,          -- 시청자가 느끼길 원하는 감정
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(series_id, episode_number)
+);
+
+-- 작업 큐
+CREATE TABLE jobs (
+    id SERIAL PRIMARY KEY,
+    episode_id INTEGER REFERENCES episodes(id),
+    job_type VARCHAR(50) NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending',
+    priority INTEGER DEFAULT 5,
+    payload JSONB,
+    result JSONB,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 작업 로그
+CREATE TABLE job_logs (
+    id SERIAL PRIMARY KEY,
+    job_id INTEGER REFERENCES jobs(id),
+    level VARCHAR(20),
+    message TEXT,
+    details JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- API 사용 로그
+CREATE TABLE api_usage (
+    id SERIAL PRIMARY KEY,
+    api_name VARCHAR(50),
+    endpoint VARCHAR(200),
+    request_data JSONB,
+    response_data JSONB,
+    cost DECIMAL(10, 4),
+    duration_ms INTEGER,
+    status_code INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+---
+
+## 6. API 엔드포인트 정의
+
+### 6.1 RESTful API
+```yaml
+# 드라마 관리
+POST   /api/v1/dramas                    # 새 드라마 생성
+GET    /api/v1/dramas                    # 드라마 목록
+GET    /api/v1/dramas/{drama_id}         # 드라마 상세
+PUT    /api/v1/dramas/{drama_id}         # 드라마 수정
+DELETE /api/v1/dramas/{drama_id}         # 드라마 삭제
+
+# 에피소드 관리
+POST   /api/v1/dramas/{drama_id}/episodes           # 에피소드 생성
+GET    /api/v1/dramas/{drama_id}/episodes           # 에피소드 목록
+GET    /api/v1/episodes/{episode_id}                # 에피소드 상세
+PUT    /api/v1/episodes/{episode_id}                # 에피소드 수정
+DELETE /api/v1/episodes/{episode_id}                # 에피소드 삭제
+POST   /api/v1/episodes/{episode_id}/regenerate     # 재생성
+
+# 작업 관리
+POST   /api/v1/jobs                      # 작업 생성
+GET    /api/v1/jobs                      # 작업 목록
+GET    /api/v1/jobs/{job_id}             # 작업 상세
+POST   /api/v1/jobs/{job_id}/retry       # 작업 재시도
+POST   /api/v1/jobs/{job_id}/cancel      # 작업 취소
+
+# 통계
+GET    /api/v1/stats/overview            # 전체 통계
+GET    /api/v1/stats/youtube             # YouTube 통계
+GET    /api/v1/stats/costs               # 비용 통계
+GET    /api/v1/stats/performance         # 성능 통계
+
+# 시스템
+GET    /api/v1/system/health             # 헬스체크
+GET    /api/v1/system/status             # 시스템 상태
+POST   /api/v1/system/maintenance        # 유지보수 모드
+```
+
+### 6.2 WebSocket
+```yaml
+# 실시간 상태 업데이트
+WS /ws/status                            # 시스템 상태 스트림
+WS /ws/jobs/{job_id}                     # 작업 진행 상태
+WS /ws/logs                              # 실시간 로그
+```
+
+---
+
+## 7. 작업 흐름 (Workflow) - 강화된 시스템
+
+### 7.0 드라마 시작 전 필수 검증 - 완전 자동화 보장
+```python
+class DramaSeriesValidator:
+    """드라마 시리즈 시작 전 완전성 검증"""
+    
+    def validate_before_production(self, series_config: Dict) -> ValidationResult:
+        """제작 시작 전 모든 요소 검증"""
+        
+        validations = []
+        
+        # 1. 캐릭터 완성도 확인 (최소 10명)
+        if len(series_config["characters"]) < 10:
+            validations.append({
+                "error": "insufficient_characters",
+                "message": f"최소 10명 필요 (현재: {len(series_config['characters'])}명)",
+                "severity": "critical"
+            })
+        
+        # 2. 음성/아바타 할당 확인
+        voice_check = self.validate_voice_assignments(series_config["characters"])
+        if not voice_check["valid"]:
+            validations.append({
+                "error": "voice_assignment_incomplete",
+                "details": voice_check["issues"],
+                "severity": "critical"
+            })
+        
+        # 3. 전체 스토리 아크 완성도
+        story_check = self.validate_story_completeness(
+            series_config["story_arc"],
+            series_config["total_episodes"]
+        )
+        if not story_check["valid"]:
+            validations.append({
+                "error": "incomplete_story_arc",
+                "details": story_check["missing_elements"],
+                "severity": "critical"
+            })
+        
+        # 4. 에피소드별 아웃라인 존재 여부
+        if len(series_config.get("episode_outlines", [])) < series_config["total_episodes"]:
+            validations.append({
+                "error": "missing_episode_outlines",
+                "message": "모든 에피소드의 아웃라인이 필요합니다",
+                "severity": "critical"
+            })
+        
+        # 5. API 리소스 가용성
+        resource_check = self.check_api_resources(series_config)
+        if not resource_check["sufficient"]:
+            validations.append({
+                "error": "insufficient_api_resources",
+                "details": resource_check["shortages"],
+                "severity": "warning"
+            })
+        
+        # 6. 자동화 시스템 체크
+        automation_check = self.validate_automation_readiness()
+        if not automation_check["ready"]:
+            validations.append({
+                "error": "automation_not_ready",
+                "details": automation_check["issues"],
+                "severity": "critical"
+            })
+        
+        return ValidationResult(
+            is_valid=len([v for v in validations if v["severity"] == "critical"]) == 0,
+            errors=validations,
+            can_proceed=len(validations) == 0
+        )
+    
+    def validate_automation_readiness(self) -> Dict:
+        """완전 자동화 준비 상태 확인"""
+        checks = {
+            "scheduler": self.check_scheduler_status(),
+            "error_recovery": self.check_error_recovery_system(),
+            "monitoring": self.check_monitoring_system(),
+            "backup_systems": self.check_backup_systems(),
+            "api_keys": self.check_all_api_keys(),
+            "storage": self.check_storage_capacity()
+        }
+        
+        return {
+            "ready": all(checks.values()),
+            "issues": [k for k, v in checks.items() if not v]
+        }
+
+class PreProductionSetup:
+    """제작 전 필수 설정 자동화"""
+    
+    def setup_complete_series(self, initial_config: Dict) -> Dict:
+        """
+        초기 설정만으로 전체 시리즈 준비
+        
+        Args:
+            initial_config: {
+                "title": "드라마 제목",
+                "genre": "romance",
+                "total_episodes": 16,
+                "basic_premise": "기본 줄거리"
+            }
+        """
+        
+        # 1. 전체 스토리 아크 생성
+        story_arc = self.generate_complete_story_arc(initial_config)
+        
+        # 2. 모든 캐릭터 자동 생성 (최소 10명 보장)
+        characters = self.generate_all_characters(initial_config, story_arc)
+        
+        # 3. 모든 에피소드 아웃라인 생성
+        episode_outlines = self.generate_all_episode_outlines(
+            story_arc,
+            characters,
+            initial_config["total_episodes"]
+        )
+        
+        # 4. 캐릭터별 음성/아바타 자동 할당
+        character_assignments = self.assign_voices_and_avatars(characters)
+        
+        # 5. 관계도 및 갈등 구조 생성
+        relationships = self.create_relationship_matrix(characters)
+        conflicts = self.design_conflict_structure(characters, story_arc)
+        
+        # 6. 품질 체크 템플릿 생성
+        quality_templates = self.create_quality_check_templates(initial_config["genre"])
+        
+        # 7. 비상 계획 수립
+        contingency_plans = self.create_contingency_plans(initial_config)
+        
+        # 완성된 시리즈 설정
+        complete_series = {
+            "series_id": generate_uuid(),
+            "initial_config": initial_config,
+            "story_arc": story_arc,
+            "characters": characters,
+            "character_assignments": character_assignments,
+            "episode_outlines": episode_outlines,
+            "relationships": relationships,
+            "conflicts": conflicts,
+            "quality_templates": quality_templates,
+            "contingency_plans": contingency_plans,
+            "production_ready": True
+        }
+        
+        # 최종 검증
+        validation = DramaSeriesValidator().validate_before_production(complete_series)
+        
+        if validation.is_valid:
+            return complete_series
+        else:
+            # 자동 수정 시도
+            return self.auto_fix_issues(complete_series, validation.errors)
+
+### 7.1 장르별 특화 시스템
+```python
+class GenreSpecificTemplates:
+    """장르별 드라마 제작 템플릿"""
+    
+    TEMPLATES = {
+        "romance": {
+            "structure": {
+                "act1": "만남과 끌림 (20%)",
+                "act2": "관계 발전과 갈등 (60%)",
+                "act3": "위기와 해결 (20%)"
+            },
+            "required_elements": [
+                "first_meeting",
+                "growing_attraction",
+                "first_conflict",
+                "confession",
+                "major_crisis",
+                "resolution"
+            ],
+            "pacing": {
+                "confession_timing": 0.5,  # 전체의 50% 지점
+                "crisis_timing": 0.8       # 전체의 80% 지점
+            },
+            "min_characters": 4,
+            "character_roles": ["주인공", "상대역", "조력자", "방해자"]
+        },
+        
+        "thriller": {
+            "structure": {
+                "act1": "사건 발생과 수수께끼 (25%)",
+                "act2": "추적과 단서 수집 (50%)",
+                "act3": "반전과 해결 (25%)"
+            },
+            "required_elements": [
+                "inciting_incident",
+                "red_herrings",
+                "clue_revelations",
+                "false_climax",
+                "true_villain_reveal",
+                "resolution"
+            ],
+            "pacing": {
+                "first_clue": 0.2,
+                "major_revelation": 0.7,
+                "final_twist": 0.9
+            },
+            "min_characters": 6,
+            "character_roles": ["주인공", "조력자", "용의자들", "진범", "희생자"]
+        },
+        
+        "comedy": {
+            "structure": {
+                "act1": "캐릭터 소개와 상황 설정 (30%)",
+                "act2": "오해와 소동 (50%)",
+                "act3": "해결과 교훈 (20%)"
+            },
+            "required_elements": [
+                "character_quirks",
+                "misunderstandings",
+                "running_gags",
+                "slapstick_moments",
+                "heartwarming_resolution"
+            ],
+            "comedy_beats_per_episode": 10,
+            "min_characters": 5
+        }
+    }
+    
+    def get_genre_prompt(self, genre: str, episode_context: Dict) -> str:
+        """장르별 특화된 프롬프트 생성"""
+        template = self.TEMPLATES[genre]
+        
+        # 현재 진행도에 따른 요소 강조
+        progress = episode_context["episode_number"] / episode_context["total_episodes"]
+        
+        required_elements = self.get_required_elements_for_progress(
+            genre, progress, template["required_elements"]
+        )
+        
+        return self.build_genre_specific_prompt(genre, required_elements, episode_context)
+```
+
+### 7.2 품질 관리 시스템
+```python
+class QualityAssuranceSystem:
+    """AI 생성 콘텐츠 품질 관리"""
+    
+    def __init__(self):
+        self.quality_checkers = [
+            DialogueNaturalnessChecker(),
+            PlotCoherenceChecker(),
+            CharacterConsistencyChecker(),
+            PacingChecker(),
+            EmotionalArcChecker()
+        ]
+        self.quality_threshold = 0.8
+    
+    def assess_script_quality(self, script: Dict, context: Dict) -> QualityReport:
+        """대본 품질 종합 평가"""
+        
+        scores = {}
+        issues = []
+        
+        for checker in self.quality_checkers:
+            result = checker.check(script, context)
+            scores[checker.name] = result.score
+            if result.score < self.quality_threshold:
+                issues.extend(result.issues)
+        
+        overall_score = sum(scores.values()) / len(scores)
+        
+        return QualityReport(
+            overall_score=overall_score,
+            category_scores=scores,
+            issues=issues,
+            needs_regeneration=overall_score < self.quality_threshold
+        )
+    
+    def auto_improve_script(self, script: Dict, quality_report: QualityReport) -> Dict:
+        """품질 이슈 자동 개선"""
+        
+        improved_script = script.copy()
+        
+        for issue in quality_report.issues:
+            if issue["type"] == "unnatural_dialogue":
+                improved_script = self.improve_dialogue(
+                    improved_script, 
+                    issue["character"],
+                    issue["scene"]
+                )
+            elif issue["type"] == "pacing_issue":
+                improved_script = self.adjust_pacing(
+                    improved_script,
+                    issue["scene_range"]
+                )
+            elif issue["type"] == "character_inconsistency":
+                improved_script = self.fix_character_consistency(
+                    improved_script,
+                    issue["character"],
+                    issue["context"]
+                )
+        
+        return improved_script
+
+class DialogueNaturalnessChecker:
+    """대사 자연스러움 검사"""
+    
+    def check(self, script: Dict, context: Dict) -> CheckResult:
+        issues = []
+        total_dialogues = 0
+        natural_dialogues = 0
+        
+        for scene in script["scenes"]:
+            for dialogue in scene["dialogues"]:
+                total_dialogues += 1
+                
+                # 자연스러움 검사
+                if self.is_natural_korean(dialogue["text"]):
+                    natural_dialogues += 1
+                else:
+                    issues.append({
+                        "type": "unnatural_dialogue",
+                        "character": dialogue["character"],
+                        "scene": scene["scene_number"],
+                        "text": dialogue["text"],
+                        "suggestion": self.suggest_improvement(dialogue["text"])
+                    })
+        
+        score = natural_dialogues / total_dialogues if total_dialogues > 0 else 0
+        
+        return CheckResult(
+            score=score,
+            issues=issues
+        )
+    
+    def is_natural_korean(self, text: str) -> bool:
+        """한국어 대사 자연스러움 판단"""
+        # 부자연스러운 패턴 체크
+        unnatural_patterns = [
+            r"나는.*입니다",  # 일상 대화에서 어색한 표현
+            r"당신은.*입니까",  # 너무 격식적
+            r"그것은.*것입니다"  # 번역투
+        ]
+        
+        for pattern in unnatural_patterns:
+            if re.search(pattern, text):
+                return False
+        
+        return True
+```
+
+### 7.3 아바타/음성 일관성 시스템
+```python
+class AvatarVoiceConsistencyManager:
+    """캐릭터별 아바타/음성 일관성 관리"""
+    
+    def __init__(self):
+        self.avatar_pool = self.load_avatar_pool()
+        self.voice_pool = self.load_voice_pool()
+        self.character_assignments = {}
+    
+    def assign_avatar_voice_to_characters(self, characters: List[Dict]) -> Dict:
+        """캐릭터별 최적 아바타/음성 할당"""
+        
+        assignments = {}
+        
+        for character in characters:
+            # 1. 캐릭터 특성 분석
+            char_features = self.analyze_character_features(character)
+            
+            # 2. 최적 아바타 선택
+            best_avatar = self.find_best_matching_avatar(
+                char_features,
+                already_used=[a["avatar_id"] for a in assignments.values()]
+            )
+            
+            # 3. 최적 음성 선택
+            best_voice = self.find_best_matching_voice(
+                char_features,
+                already_used=[a["voice_id"] for a in assignments.values()]
+            )
+            
+            # 4. 백업 옵션 준비
+            backup_avatars = self.get_similar_avatars(best_avatar, count=3)
+            backup_voices = self.get_similar_voices(best_voice, count=3)
+            
+            assignments[character["name"]] = {
+                "avatar_id": best_avatar,
+                "voice_id": best_voice,
+                "backup_avatars": backup_avatars,
+                "backup_voices": backup_voices,
+                "locked": True  # 시리즈 중간에 변경 방지
+            }
+        
+        self.character_assignments = assignments
+        return assignments
+    
+    def ensure_consistency(self, series_id: str, episode_num: int) -> bool:
+        """에피소드별 일관성 확인"""
+        
+        # 이전 에피소드와 동일한 아바타/음성 사용 확인
+        previous_assignments = self.get_previous_assignments(series_id, episode_num - 1)
+        current_assignments = self.character_assignments
+        
+        for char_name in current_assignments:
+            if char_name in previous_assignments:
+                if (current_assignments[char_name]["avatar_id"] != 
+                    previous_assignments[char_name]["avatar_id"]):
+                    # 불일치 발견 - 자동 수정
+                    self.fix_inconsistency(char_name, previous_assignments[char_name])
+        
+        return True
+```
+
+### 7.4 완전 자동화 워크플로우 - 100% 무인 운영
+```python
+@celery_app.task
+def fully_automated_production():
+    """
+    100% 자동화된 일일 제작 프로세스
+    사람의 개입 없이 완전 자동 운영
+    """
+    try:
+        # 1. 활성 시리즈 조회
+        active_series = get_active_series()
+        
+        for series in active_series:
+            # 2. 오늘 제작할 에피소드 자동 결정
+            episodes_to_produce = calculate_daily_episodes(series)
+            
+            # 3. 각 에피소드 완전 자동 제작
+            for ep_num in episodes_to_produce:
+                produce_episode_fully_automated.delay(
+                    series.id,
+                    ep_num,
+                    retry_policy={
+                        'max_retries': 5,
+                        'retry_backoff': True,
+                        'retry_jitter': True
+                    }
+                )
+        
+        # 4. 시스템 상태 자동 모니터링
+        monitor_system_health.delay()
+        
+    except Exception as e:
+        # 중대 오류 시 자동 복구
+        handle_critical_error(e)
+        # 백업 시스템 활성화
+        activate_backup_production.delay()
+
+@celery_app.task(bind=True)
+def produce_episode_fully_automated(self, series_id: int, episode_number: int):
+    """
+    에피소드 완전 자동 제작 (인간 개입 불필요)
+    """
+    episode_id = f"{series_id}_EP{episode_number}"
+    
+    try:
+        # 1. 제작 시작 전 사전 체크
+        pre_check = automated_pre_production_check(series_id, episode_number)
+        if not pre_check["ready"]:
+            auto_fix_issues(pre_check["issues"])
+        
+        # 2. 대본 자동 생성 (연속성 보장)
+        script_result = generate_script_with_full_continuity(series_id, episode_number)
+        
+        # 3. 품질 자동 검증 및 개선
+        quality_result = auto_quality_check_and_improve(script_result)
+        
+        # 4. 음성 자동 생성 (10명 이상 캐릭터)
+        voice_result = generate_all_character_voices(quality_result["script"])
+        
+        # 5. 영상 자동 생성 (스마트 아바타 할당)
+        video_result = generate_videos_with_smart_allocation(
+            quality_result["script"],
+            voice_result["files"]
+        )
+        
+        # 6. 자동 편집 (장면 전환, 자막, BGM)
+        edited_result = auto_edit_episode(video_result["videos"])
+        
+        # 7. 최종 품질 검증
+        final_check = final_quality_validation(edited_result)
+        
+        # 8. YouTube 자동 업로드 및 예약
+        upload_result = auto_upload_to_youtube(
+            final_check["video"],
+            episode_metadata=auto_generate_metadata(series_id, episode_number)
+        )
+        
+        # 9. 제작 완료 및 다음 에피소드 준비
+        finalize_and_prepare_next(series_id, episode_number)
+        
+        return {
+            "status": "success",
+            "episode_id": episode_id,
+            "youtube_id": upload_result["video_id"],
+            "production_time": calculate_production_time()
+        }
+        
+    except Exception as e:
+        # 자동 에러 처리 및 복구
+        return handle_episode_error_automatically(
+            series_id,
+            episode_number,
+            e,
+            self.request.retries
+        )
+
+class AutomatedQualitySystem:
+    """완전 자동화된 품질 관리 시스템"""
+    
+    def auto_quality_check_and_improve(self, script: Dict) -> Dict:
+        """품질 자동 검사 및 개선"""
+        
+        max_iterations = 3
+        current_script = script
+        
+        for iteration in range(max_iterations):
+            # 1. 품질 점수 계산
+            quality_score = self.calculate_quality_score(current_script)
+            
+            if quality_score["overall"] >= 0.85:
+                return {
+                    "script": current_script,
+                    "quality_score": quality_score,
+                    "iterations": iteration + 1
+                }
+            
+            # 2. 자동 개선
+            improvements = self.identify_improvements(current_script, quality_score)
+            current_script = self.apply_improvements(current_script, improvements)
+        
+        # 최대 반복 후에도 품질 미달 시
+        return self.fallback_quality_assurance(current_script)
+    
+    def calculate_quality_score(self, script: Dict) -> Dict:
+        """다차원 품질 점수 계산"""
+        scores = {
+            "dialogue_naturalness": self.check_dialogue_naturalness(script),
+            "plot_coherence": self.check_plot_coherence(script),
+            "character_consistency": self.check_character_consistency(script),
+            "pacing": self.check_pacing(script),
+            "emotional_arc": self.check_emotional_arc(script),
+            "continuity": self.check_continuity(script)
+        }
+        
+        scores["overall"] = sum(scores.values()) / len(scores)
+        return scores
+
+class SmartResourceAllocation:
+    """리소스 자동 할당 시스템"""
+    
+    def allocate_avatars_intelligently(self, scene: Dict, available_resources: Dict) -> Dict:
+        """
+        장면별 최적 아바타 할당
+        - 중요도 기반
+        - 리소스 제약 고려
+        - 시각적 다양성 확보
+        """
+        
+        # 1. 장면 분석
+        scene_importance = self.calculate_scene_importance(scene)
+        character_importance = self.calculate_character_importance_in_scene(scene)
+        
+        # 2. 할당 전략 결정
+        if scene_importance > 0.8:
+            # 중요 장면: 최대한 아바타 사용
+            strategy = "maximize_avatars"
+        elif available_resources["avatar_credits"] < 50:
+            # 리소스 부족: 절약 모드
+            strategy = "conserve_resources"
+        else:
+            # 일반: 균형 할당
+            strategy = "balanced"
+        
+        # 3. 구체적 할당
+        allocations = {}
+        
+        for character in scene["characters"]:
+            if strategy == "maximize_avatars":
+                allocations[character] = self.allocate_best_avatar(character)
+            elif strategy == "conserve_resources":
+                allocations[character] = self.allocate_minimal_resources(character)
+            else:
+                allocations[character] = self.allocate_balanced(character, character_importance[character])
+        
+        return allocations
+
+class AutoErrorRecovery:
+    """자동 에러 복구 시스템"""
+    
+    def handle_episode_error_automatically(
+        self,
+        series_id: int,
+        episode_number: int,
+        error: Exception,
+        retry_count: int
+    ) -> Dict:
+        """에러 자동 처리 및 복구"""
+        
+        error_type = self.classify_error(error)
+        
+        recovery_strategies = {
+            "api_timeout": self.handle_api_timeout,
+            "api_quota": self.handle_api_quota_exceeded,
+            "quality_fail": self.handle_quality_failure,
+            "resource_limit": self.handle_resource_limit,
+            "unknown": self.handle_unknown_error
+        }
+        
+        # 적절한 복구 전략 실행
+        recovery_func = recovery_strategies.get(error_type, self.handle_unknown_error)
+        recovery_result = recovery_func(series_id, episode_number, error, retry_count)
+        
+        if recovery_result["success"]:
+            # 복구 성공 - 제작 재개
+            return self.resume_production(
+                series_id,
+                episode_number,
+                recovery_result["checkpoint"]
+            )
+        else:
+            # 복구 실패 - 대체 전략
+            return self.execute_fallback_strategy(series_id, episode_number)
+    
+    def handle_api_quota_exceeded(self, series_id: int, episode_number: int, error: Exception, retry_count: int) -> Dict:
+        """API 할당량 초과 자동 처리"""
+        
+        # 1. 대체 API 계정으로 전환
+        if self.switch_to_backup_api():
+            return {"success": True, "checkpoint": "api_switched"}
+        
+        # 2. 리소스 절약 모드로 전환
+        if self.enable_resource_saving_mode():
+            return {"success": True, "checkpoint": "resource_saving"}
+        
+        # 3. 다음 날로 일정 자동 조정
+        if retry_count < 3:
+            self.reschedule_episode(series_id, episode_number, hours=24)
+            return {"success": True, "checkpoint": "rescheduled"}
+        
+        return {"success": False}voices_generated"]:
+                voices = self.generate_voices_with_partial_recovery(script)
+                self.checkpoint_manager.save_voices(series_id, episode_num, voices)
+                checkpoints["voices_generated"] = True
+            else:
+                voices = self.checkpoint_manager.load_voices(series_id, episode_num)
+            
+            # 3. 영상 생성 (씬별 개별 처리)
+            if not checkpoints["videos_generated"]:
+                videos = self.generate_videos_by_scene(script, voices)
+                checkpoints["videos_generated"] = True
+            
+            # ... 나머지 단계도 동일하게 처리
+            
+        except Exception as e:
+            # 실패 지점부터 재시작 가능
+            self.handle_production_failure(series_id, episode_num, checkpoints, e)
+            raise
+    
+    def generate_voices_with_partial_recovery(self, script: Dict) -> Dict:
+        """부분 실패 복구가 가능한 음성 생성"""
+        
+        voices = {}
+        failed_dialogues = []
+        
+        for scene in script["scenes"]:
+            for dialogue in scene["dialogues"]:
+                dialogue_id = f"s{scene['scene_number']}_d{dialogue['id']}"
+                
+                try:
+                    # 개별 대사 음성 생성
+                    voice_file = self.generate_single_voice(dialogue)
+                    voices[dialogue_id] = voice_file
+                    
+                except Exception as e:
+                    logger.error(f"Voice generation failed for {dialogue_id}: {e}")
+                    failed_dialogues.append(dialogue_id)
+        
+        # 실패한 대사만 재시도
+        if failed_dialogues:
+            voices.update(self.retry_failed_voices(script, failed_dialogues))
+        
+        return voices
+```
+
+### 7.5 시청자 피드백 반영 시스템
+```python
+class ViewerFeedbackSystem:
+    """시청자 반응 분석 및 반영"""
+    
+    def __init__(self):
+        self.youtube_analyzer = YouTubeCommentAnalyzer()
+        self.sentiment_analyzer = SentimentAnalyzer()
+    
+    def analyze_episode_feedback(self, youtube_id: str) -> FeedbackReport:
+        """에피소드별 시청자 반응 분석"""
+        
+        # 1. 댓글 수집
+        comments = self.youtube_analyzer.get_comments(youtube_id, limit=1000)
+        
+        # 2. 감정 분석
+        sentiment_analysis = self.sentiment_analyzer.analyze_comments(comments)
+        
+        # 3. 주요 키워드 추출
+        keywords = self.extract_keywords(comments)
+        
+        # 4. 캐릭터별 반응 분석
+        character_feedback = self.analyze_character_popularity(comments)
+        
+        # 5. 스토리 요소별 반응
+        story_feedback = self.analyze_story_elements(comments)
+        
+        return FeedbackReport(
+            overall_sentiment=sentiment_analysis["overall"],
+            character_popularity=character_feedback,
+            loved_elements=story_feedback["positive"],
+            disliked_elements=story_feedback["negative"],
+            viewer_suggestions=self.extract_suggestions(comments)
+        )
+    
+    def adapt_future_episodes(self, series_id: str, feedback_reports: List[FeedbackReport]):
+        """피드백을 바탕으로 향후 에피소드 조정"""
+        
+        adaptations = {
+            "character_focus": self.calculate_character_focus_changes(feedback_reports),
+            "pacing_adjustments": self.calculate_pacing_changes(feedback_reports),
+            "plot_emphasis": self.calculate_plot_emphasis(feedback_reports),
+            "tone_adjustments": self.calculate_tone_adjustments(feedback_reports)
+        }
+        
+        # 향후 에피소드 아웃라인 수정
+        self.update_future_outlines(series_id, adaptations)
+        
+        return adaptations
+
+class AutomatedStoryAdjustment:
+    """시청자 반응에 따른 자동 스토리 조정"""
+    
+    def adjust_character_screen_time(self, series_id: str, popularity_data: Dict):
+        """인기 캐릭터 출연 비중 자동 조정"""
+        
+        # 1. 인기도 순위 계산
+        character_ranking = sorted(
+            popularity_data.items(),
+            key=lambda x: x[1]["score"],
+            reverse=True
+        )
+        
+        # 2. 향후 에피소드 출연 비중 재분배
+        future_episodes = self.get_unproduced_episodes(series_id)
+        
+        for episode in future_episodes:
+            # 인기 캐릭터 중심으로 재구성
+            adjusted_outline = self.redistribute_character_focus(
+                episode["outline"],
+                character_ranking
+            )
+            
+            self.update_episode_outline(series_id, episode["number"], adjusted_outline)
+```
+
+### 7.6 완전 자동화 검증 체크리스트
+```python
+class ProductionReadinessChecker:
+    """제작 시작 전 완전 자동화 가능성 검증"""
+    
+    def comprehensive_check(self, series_config: Dict) -> ReadinessReport:
+        """종합적인 제작 준비도 검사"""
+        
+        checks = {
+            # 1. 스토리 완성도
+            "story_completeness": self.check_story_completeness(series_config),
+            
+            # 2. 캐릭터 준비도
+            "character_readiness": self.check_character_readiness(series_config),
+            
+            # 3. 기술적 준비도
+            "technical_readiness": self.check_technical_readiness(),
+            
+            # 4. 리소스 가용성
+            "resource_availability": self.check_resource_availability(series_config),
+            
+            # 5. 장르별 요구사항
+            "genre_requirements": self.check_genre_requirements(series_config),
+            
+            # 6. 연속성 시스템
+            "continuity_system": self.check_continuity_system(),
+            
+            # 7. 품질 보증 시스템
+            "quality_assurance": self.check_quality_system(),
+            
+            # 8. 복구 시스템
+            "recovery_system": self.check_recovery_system(),
+            
+            # 9. 확장성
+            "scalability": self.check_scalability(series_config["total_episodes"])
+        }
+        
+        all_ready = all(check["passed"] for check in checks.values())
+        
+        return ReadinessReport(
+            ready_to_start=all_ready,
+            checks=checks,
+            estimated_success_rate=self.calculate_success_rate(checks),
+            recommendations=self.generate_recommendations(checks)
+        )
+```
+
+### 7.1 시리즈 제작 워크플로우
+```python
+@celery_app.task
+def create_new_drama_series(series_config: Dict):
+    """
+    새로운 드라마 시리즈 시작
+    """
+    # 1. 시리즈 기획
+    series_generator = SeriesGenerator()
+    series_data = series_generator.create_series_blueprint(series_config)
+    
+    # 2. 전체 스토리 아크 생성
+    story_arc = series_generator.generate_story_arc(
+        title=series_config["title"],
+        genre=series_config["genre"],
+        episodes=series_config["total_episodes"]
+    )
+    
+    # 3. 캐릭터 생성 및 관계 설정
+    characters = series_generator.create_all_characters(series_config)
+    relationships = series_generator.establish_relationships(characters)
+    
+    # 4. 에피소드별 아웃라인 생성
+    episode_outlines = series_generator.create_episode_outlines(
+        story_arc,
+        characters,
+        series_config["total_episodes"]
+    )
+    
+    # 5. 데이터베이스 저장
+    series_id = save_series_data(series_data, characters, episode_outlines)
+    
+    # 6. 첫 번째 에피소드 제작 시작
+    start_episode_production.delay(series_id, 1)
+    
+    return series_id
+
+@celery_app.task
+def daily_series_production():
+    """
+    진행 중인 시리즈들의 일일 제작
+    """
+    # 1. 활성 시리즈 조회
+    active_series = get_active_series()
+    
+    for series in active_series:
+        # 2. 다음 제작할 에피소드 확인
+        next_episodes = get_next_episodes_to_produce(
+            series.id,
+            count=series.daily_episode_count
+        )
+        
+        # 3. 각 에피소드 제작
+        for episode_num in next_episodes:
+            # 연속성 체크
+            if check_continuity_ready(series.id, episode_num):
+                produce_episode_with_continuity.delay(
+                    series.id,
+                    episode_num
+                )
+            else:
+                logger.warning(f"Continuity not ready for {series.id} ep{episode_num}")
+
+@celery_app.task
+def produce_episode_with_continuity(series_id: int, episode_number: int):
+    """
+    연속성을 고려한 에피소드 제작
+    """
+    try:
+        # 1. 컨텍스트 로드
+        context_builder = ContextBuilder()
+        episode_context = context_builder.build_full_context(series_id, episode_number)
+        
+        # 2. 대본 생성 (연속성 반영)
+        script_generator = ScriptGenerator()
+        script = script_generator.generate_episode_script(
+            series_id=series_id,
+            episode_number=episode_number,
+            context=episode_context
+        )
+        
+        # 3. 연속성 검증
+        continuity_checker = ContinuityChecker()
+        validation_result = continuity_checker.validate(script, episode_context)
+        
+        if not validation_result.is_valid:
+            # 문제 발견 시 재생성
+            script = script_generator.regenerate_with_fixes(
+                script,
+                validation_result.issues
+            )
+        
+        # 4. 캐릭터 상태 업데이트
+        update_character_states(series_id, episode_number, script)
+        
+        # 5. 스토리 메모리 업데이트
+        update_story_memory(series_id, episode_number, script)
+        
+        # 6. 음성, 영상, 편집, 업로드 진행
+        chain = (
+            generate_voices_for_episode.s(script) |
+            generate_videos_for_episode.s() |
+            edit_episode_with_continuity.s() |
+            upload_episode.s() |
+            finalize_episode.s()
+        )
+        
+        chain.apply_async()
+        
+    except Exception as e:
+        handle_episode_error(series_id, episode_number, e)
+```
+
+### 7.2 연속성 관리 시스템
+```python
+class ContinuityChecker:
+    """에피소드 간 연속성을 검증하는 시스템"""
+    
+    def __init__(self):
+        self.validators = [
+            CharacterConsistencyValidator(),
+            PlotContinuityValidator(),
+            RelationshipProgressionValidator(),
+            TimelineValidator(),
+            SettingConsistencyValidator()
+        ]
+    
+    def validate(self, script: Dict, context: Dict) -> ValidationResult:
+        """종합적인 연속성 검증"""
+        issues = []
+        
+        for validator in self.validators:
+            validation = validator.validate(script, context)
+            if not validation.passed:
+                issues.extend(validation.issues)
+        
+        return ValidationResult(
+            is_valid=len(issues) == 0,
+            issues=issues
+        )
+
+class CharacterConsistencyValidator:
+    """캐릭터 일관성 검증"""
+    
+    def validate(self, script: Dict, context: Dict) -> ValidationResult:
+        issues = []
+        
+        # 1. 캐릭터 성격 일관성 체크
+        for scene in script["scenes"]:
+            for dialogue in scene["dialogues"]:
+                character = dialogue["character"]
+                if not self.check_personality_consistency(
+                    character,
+                    dialogue["text"],
+                    context["character_states"][character]
+                ):
+                    issues.append({
+                        "type": "personality_inconsistency",
+                        "character": character,
+                        "scene": scene["scene_number"],
+                        "issue": "캐릭터 성격과 맞지 않는 대사"
+                    })
+        
+        # 2. 캐릭터 지식 일관성 체크
+        # (이전에 모르던 정보를 갑자기 아는 경우 등)
+        
+        # 3. 캐릭터 목표 일관성 체크
+        # (갑작스러운 목표 변경 등)
+        
+        return ValidationResult(len(issues) == 0, issues)
+
+class PlotContinuityValidator:
+    """플롯 연속성 검증"""
+    
+    def validate(self, script: Dict, context: Dict) -> ValidationResult:
+        issues = []
+        
+        # 1. 미해결 플롯 처리 확인
+        unresolved = context["unresolved_plots"]
+        addressed = self.find_addressed_plots(script, unresolved)
+        
+        # 2. 새로운 플롯과 기존 플롯 충돌 확인
+        new_plots = self.extract_new_plots(script)
+        conflicts = self.check_plot_conflicts(new_plots, context["overall_plot"])
+        
+        # 3. 인과관계 검증
+        causality_issues = self.check_causality(script, context["previous_events"])
+        
+        issues.extend(conflicts + causality_issues)
+        
+        return ValidationResult(len(issues) == 0, issues)
+```
+
+### 7.3 시리즈 기획 도구
+```python
+class SeriesGenerator:
+    """드라마 시리즈 전체 기획 생성"""
+    
+    def create_series_blueprint(self, config: Dict) -> Dict:
+        """시리즈 전체 청사진 생성"""
+        blueprint = {
+            "title": config["title"],
+            "genre": config["genre"],
+            "logline": self.generate_logline(config),
+            "themes": self.identify_themes(config),
+            "tone": self.determine_tone(config),
+            "target_audience": config["target_audience"],
+            "unique_selling_points": self.generate_usps(config)
+        }
+        
+        return blueprint
+    
+    def generate_story_arc(self, title: str, genre: str, episodes: int) -> Dict:
+        """전체 스토리 아크 생성"""
+        prompt = SERIES_PLOT_TEMPLATE.format(
+            title=title,
+            genre=genre,
+            total_episodes=episodes,
+            main_theme=self.extract_main_theme(title, genre),
+            target_audience=self.identify_target_audience(genre)
+        )
+        
+        response = self.openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.8
+        )
+        
+        story_arc = json.loads(response.choices[0].message.content)
+        
+        # 스토리 아크 검증 및 보완
+        story_arc = self.validate_and_enhance_arc(story_arc, episodes)
+        
+        return story_arc
+    
+    def create_episode_outlines(self, story_arc: Dict, characters: List, 
+                               total_episodes: int) -> List[Dict]:
+        """각 에피소드별 상세 아웃라인 생성"""
+        outlines = []
+        
+        # 스토리 아크를 에피소드별로 분배
+        arc_distribution = self.distribute_story_arc(story_arc, total_episodes)
+        
+        for ep_num in range(1, total_episodes + 1):
+            outline = {
+                "episode_number": ep_num,
+                "arc_phase": self.get_arc_phase(ep_num, total_episodes),
+                "main_event": arc_distribution[ep_num]["main_event"],
+                "sub_events": arc_distribution[ep_num]["sub_events"],
+                "character_focus": self.assign_character_focus(ep_num, characters),
+                "emotional_journey": self.plan_emotional_journey(ep_num, story_arc),
+                "cliffhanger_type": self.determine_cliffhanger(ep_num, total_episodes)
+            }
+            
+            outlines.append(outline)
+        
+        return outlines
+    
+    def create_all_characters(self, series_config: Dict) -> List[Dict]:
+        """시리즈의 모든 캐릭터 생성"""
+        characters = []
+        
+        # 1. 주인공 생성
+        protagonists = self.create_protagonists(series_config)
+        characters.extend(protagonists)
+        
+        # 2. 주요 조연 생성
+        supporting = self.create_supporting_characters(series_config, protagonists)
+        characters.extend(supporting)
+        
+        # 3. 반복 출연 캐릭터 생성
+        recurring = self.create_recurring_characters(series_config)
+        characters.extend(recurring)
+        
+        # 4. 캐릭터 간 케미스트리 설정
+        self.establish_chemistry(characters)
+        
+        return characters
+    
+    def establish_relationships(self, characters: List[Dict]) -> Dict:
+        """캐릭터 간 초기 관계 설정"""
+        relationships = {}
+        
+        for i, char1 in enumerate(characters):
+            for char2 in characters[i+1:]:
+                rel_key = f"{char1['name']}-{char2['name']}"
+                
+                relationships[rel_key] = {
+                    "type": self.determine_relationship_type(char1, char2),
+                    "initial_state": self.set_initial_state(char1, char2),
+                    "potential_development": self.plan_relationship_arc(char1, char2),
+                    "conflict_points": self.identify_conflict_points(char1, char2)
+                }
+        
+        return relationships
+```
+
+---
+
+## 8. 에러 처리 및 복구
+
+### 8.1 에러 처리 전략
+```python
+class ErrorHandler:
+    def __init__(self):
+        self.error_thresholds = {
+            "api_error": 5,
+            "network_error": 10,
+            "processing_error": 3
+        }
+        self.recovery_strategies = self.load_recovery_strategies()
+    
+    def handle_error(self, error_type: str, error_details: Dict):
+        """에러 처리 및 복구"""
+        # 1. 에러 로깅
+        self.log_error(error_type, error_details)
+        
+        # 2. 임계값 확인
+        if self.check_threshold_exceeded(error_type):
+            self.escalate_error(error_type, error_details)
+        
+        # 3. 복구 전략 실행
+        recovery_strategy = self.get_recovery_strategy(error_type)
+        return recovery_strategy.execute(error_details)
+```
+
+### 8.2 복구 전략
+```python
+RECOVERY_STRATEGIES = {
+    "api_rate_limit": {
+        "strategy": "exponential_backoff",
+        "initial_delay": 60,
+        "max_delay": 3600,
+        "max_retries": 5
+    },
+    "api_quota_exceeded": {
+        "strategy": "switch_account",
+        "fallback_accounts": ["account2", "account3"]
+    },
+    "video_generation_failed": {
+        "strategy": "retry_with_different_avatar",
+        "fallback_avatars": ["avatar2", "avatar3"]
+    },
+    "upload_failed": {
+        "strategy": "retry_with_compression",
+        "compression_levels": [0.9, 0.8, 0.7]
+    }
+}
+```
+
+---
+
+## 9. 모니터링 및 알림
+
+### 9.1 모니터링 메트릭
+```python
+MONITORING_METRICS = {
+    "system": [
+        "cpu_usage",
+        "memory_usage",
+        "disk_usage",
+        "network_io"
+    ],
+    "application": [
+        "episodes_created_today",
+        "episodes_in_progress",
+        "episodes_failed",
+        "average_processing_time",
+        "api_usage_by_service",
+        "total_cost_today"
+    ],
+    "business": [
+        "youtube_views",
+        "youtube_subscribers",
+        "revenue_today",
+        "engagement_rate"
+    ]
+}
+```
+
+### 9.2 알림 설정
+```python
+ALERT_RULES = {
+    "critical": {
+        "conditions": [
+            "error_rate > 10%",
+            "api_quota_remaining < 10%",
+            "system_disk_usage > 90%"
+        ],
+        "channels": ["email", "sms", "slack"],
+        "recipients": ["admin@example.com"]
+    },
+    "warning": {
+        "conditions": [
+            "error_rate > 5%",
+            "processing_time > 30min",
+            "cost_today > daily_budget * 0.8"
+        ],
+        "channels": ["email", "slack"],
+        "recipients": ["team@example.com"]
+    }
+}
+```
+
+---
+
+## 10. 성능 최적화
+
+### 10.1 병렬 처리
+```python
+class ParallelProcessor:
+    def __init__(self, max_workers=4):
+        self.executor = ProcessPoolExecutor(max_workers=max_workers)
+    
+    def process_scenes_parallel(self, scenes: List[Dict]) -> List[str]:
+        """장면별 병렬 처리"""
+        futures = []
+        
+        for scene in scenes:
+            future = self.executor.submit(
+                self.process_single_scene,
+                scene
+            )
+            futures.append(future)
+        
+        # 결과 수집
+        results = []
+        for future in as_completed(futures):
+            try:
+                result = future.result(timeout=300)
+                results.append(result)
+            except TimeoutError:
+                self.handle_timeout(future)
+        
+        return results
+```
+
+### 10.2 캐싱 전략
+```python
+CACHE_CONFIG = {
+    "redis": {
+        "host": "localhost",
+        "port": 6379,
+        "db": 0,
+        "decode_responses": True
+    },
+    "ttl": {
+        "character_profiles": 86400,  # 24시간
+        "voice_settings": 3600,       # 1시간
+        "api_responses": 300,         # 5분
+        "generated_scripts": 0        # 영구 보관
+    }
+}
+
+@cache.memoize(timeout=CACHE_CONFIG["ttl"]["character_profiles"])
+def get_character_profile(character_id: str) -> Dict:
+    """캐시된 캐릭터 프로필 조회"""
+    return db.query(
+        "SELECT * FROM characters WHERE id = %s",
+        (character_id,)
+    )
+```
+
+---
+
+## 11. 보안 설정
+
+### 11.1 API 키 관리
+```python
+class SecureConfig:
+    def __init__(self):
+        self.vault_client = hvac.Client(
+            url='http://localhost:8200',
+            token=os.environ.get('VAULT_TOKEN')
+        )
+    
+    def get_api_key(self, service: str) -> str:
+        """Vault에서 API 키 조회"""
+        secret = self.vault_client.secrets.kv.v2.read_secret_version(
+            path=f'api-keys/{service}'
+        )
+        return secret['data']['data']['key']
+    
+    def rotate_api_keys(self):
+        """API 키 정기 교체"""
+        services = ['openai', 'elevenlabs', 'heygen', 'youtube']
+        for service in services:
+            new_key = self.generate_new_key(service)
+            self.update_key_in_vault(service, new_key)
+```
+
+### 11.2 접근 제어
+```python
+SECURITY_CONFIG = {
+    "authentication": {
+        "type": "jwt",
+        "secret_key": os.environ.get("JWT_SECRET"),
+        "algorithm": "HS256",
+        "expire_minutes": 30
+    },
+    "rate_limiting": {
+        "requests_per_minute": 60,
+        "requests_per_hour": 1000
+    },
+    "cors": {
+        "allowed_origins": ["http://localhost:3000"],
+        "allowed_methods": ["GET", "POST", "PUT", "DELETE"],
+        "allowed_headers": ["*"]
+    }
+}
+```
+
+---
+
+## 12. 배포 설정
+
+### 12.1 Docker 구성
+```dockerfile
+# Dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# 시스템 패키지 설치
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python 의존성 설치
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 애플리케이션 복사
+COPY . .
+
+# 환경 변수
+ENV PYTHONUNBUFFERED=1
+
+# 실행
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### 12.2 Docker Compose
+```yaml
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/aidrama
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./videos:/app/videos
+      - ./logs:/app/logs
+
+  worker:
+    build: .
+    command: celery -A app.workers worker -l info
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/aidrama
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./videos:/app/videos
+
+  scheduler:
+    build: .
+    command: celery -A app.workers beat -l info
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/aidrama
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_DB=aidrama
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:6-alpine
+    ports:
+      - "6379:6379"
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+```
+
+---
+
+## 13. 테스트 전략
+
+### 13.1 단위 테스트
+```python
+# tests/test_script_generator.py
+import pytest
+from app.core.script_generator import ScriptGenerator
+
+class TestScriptGenerator:
+    @pytest.fixture
+    def generator(self):
+        return ScriptGenerator()
+    
+    def test_generate_episode_script(self, generator, mock_openai):
+        """에피소드 대본 생성 테스트"""
+        # Given
+        episode_number = 1
+        mock_openai.return_value = {"scenes": [...]}
+        
+        # When
+        result = generator.generate_episode_script(episode_number)
+        
+        # Then
+        assert result["episode_number"] == episode_number
+        assert len(result["scenes"]) >= 5
+        assert result["total_duration"] >= 9.0
+    
+    def test_validate_script(self, generator):
+        """대본 유효성 검증 테스트"""
+        # Given
+        valid_script = {
+            "episode_number": 1,
+            "title": "첫 만남",
+            "scenes": [...]
+        }
+        
+        # When/Then
+        assert generator.validate_script(valid_script) == True
+```
+
+### 13.2 통합 테스트
+```python
+# tests/test_integration.py
+class TestEndToEnd:
+    def test_complete_episode_production(self):
+        """전체 에피소드 제작 프로세스 테스트"""
+        # 1. 에피소드 생성
+        episode = create_test_episode()
+        
+        # 2. 대본 생성
+        script = generate_script(episode.id)
+        assert script is not None
+        
+        # 3. 음성 생성
+        voices = generate_voices(script)
+        assert len(voices) > 0
+        
+        # 4. 영상 생성
+        videos = generate_videos(script, voices)
+        assert len(videos) == len(script["scenes"])
+        
+        # 5. 편집
+        final_video = edit_episode(videos)
+        assert os.path.exists(final_video)
+        
+        # 6. 업로드 (테스트 모드)
+        youtube_id = upload_to_youtube(final_video, test_mode=True)
+        assert youtube_id is not None
+```
+
+---
+
+## 14. 운영 매뉴얼
+
+### 14.1 일일 점검 사항
+```yaml
+일일 점검 체크리스트:
+  시스템:
+    - [ ] 서버 상태 확인
+    - [ ] 디스크 용량 확인 (80% 미만)
+    - [ ] 메모리 사용률 확인
+    - [ ] API 잔액 확인
+  
+  제작:
+    - [ ] 오늘 제작 예정 에피소드 확인
+    - [ ] 진행 중인 작업 상태 확인
+    - [ ] 실패한 작업 재시도
+    - [ ] YouTube 업로드 확인
+  
+  품질:
+    - [ ] 생성된 영상 샘플 확인
+    - [ ] 자막 정확도 확인
+    - [ ] 음성 품질 확인
+    - [ ] 댓글 및 피드백 확인
+```
+
+### 14.2 문제 해결 가이드
+```yaml
+일반적인 문제 해결:
+  API 한도 초과:
+    - 대체 API 키로 전환
+    - 일일 제작량 조정
+    - 다음날까지 대기
+  
+  영상 생성 실패:
+    - 아바타 변경 후 재시도
+    - 음성 파일 검증
+    - 수동 생성 후 업로드
+  
+  업로드 실패:
+    - 네트워크 연결 확인
+    - YouTube API 상태 확인
+    - 영상 크기 축소 후 재시도
+```
+
+---
+
+## 15. 비용 최적화
+
+### 15.1 API 사용 최적화
+```python
+class CostOptimizer:
+    def __init__(self):
+        self.cost_limits = {
+            "daily_total": 100.0,  # $100
+            "openai": 50.0,
+            "elevenlabs": 20.0,
+            "heygen": 30.0
+        }
+    
+    def optimize_api_usage(self):
+        """API 사용 최적화"""
+        # 1. 현재 사용량 확인
+        current_usage = self.get_current_usage()
+        
+        # 2. 한도 초과 예상시 조정
+        if self.predict_overage(current_usage):
+            self.adjust_production_rate()
+            self.switch_to_cheaper_options()
+```
+
+### 15.2 리소스 최적화
+```python
+OPTIMIZATION_RULES = {
+    "script_length": {
+        "target_words": 1500,  # 10분 기준
+        "tolerance": 100
+    },
+    "video_quality": {
+        "resolution": "720p",  # 1080p 대신
+        "bitrate": "3000k"    # 5000k 대신
+    },
+    "batch_processing": {
+        "batch_size": 5,      # 동시 처리 수
+        "delay_between": 60   # 배치 간 대기 시간
+    }
+}
+```
+
+---
+
+이 개발 지시서를 개발자에게 전달하시면, 시스템 구축에 필요한 모든 기술적 세부사항을 이해할 수 있습니다.
+
+추가로 필요한 부분이나 더 상세한 설명이 필요한 부분이 있으시면 말씀해주세요.
